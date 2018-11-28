@@ -1,35 +1,49 @@
+#!/usr/bin/env python3
 import sounddevice as sd
+from deepspeech import Model
 import argparse
+from pathlib import Path
 
-parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument(
-    '-l', '--list-devices', action='store_true',
-    help='show list of audio devices and exit')
-parser.add_argument(
-    '-d', '--device', type=int,
-    help='input device (numeric ID or substring)')
-args = parser.parse_args()
+# Beam width used in the CTC decoder when building candidate transcriptions
+BEAM_WIDTH = 500
+
+# The alpha hyperparameter of the CTC decoder. Language Model weight
+LM_WEIGHT = 1.50
+
+# Valid word insertion weight. This is used to lessen the word insertion penalty
+# when the inserted word is part of the vocabulary
+VALID_WORD_COUNT_WEIGHT = 2.10
+
+# Number of MFCC features to use
+N_FEATURES = 26
+
+# Size of the context window used for producing timesteps in the input vector
+N_CONTEXT = 9
 
 
-def callback(indata, frames, time, status):
-    """This is called (from a separate thread) for each audio block."""
-    if status:
-        print(status, flush=True)
-    queue.put(indata.copy())
+def get_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('model_path', type=Path)
+    return parser
 
 
-if args.list_devices:
-    print(sd.query_devices())
-    parser.exit()
+args = get_parser().parse_args()
 
 fs = 16000
 sd.default.samplerate = fs
 sd.default.channels = 1
 
-with sd.InputStream(
-        samplerate=16000,
-        device=args.device,
-        channels=args.channels,
-        callback=callback
-):
-    myrecording = sd.rec(int(5 * fs))
+ds = Model(str(args.model_path / 'output_graph.pbmm'), N_FEATURES, N_CONTEXT, str(args.model_path / 'alphabet.txt'),
+           BEAM_WIDTH)
+ds.enableDecoderWithLM(
+    str(args.model_path / 'alphabet.txt'),
+    str(args.model_path / 'lm.binary'),
+    str(args.model_path / 'trie'),
+    LM_WEIGHT,
+    VALID_WORD_COUNT_WEIGHT
+)
+
+while True:
+    print('Started listening')
+    myrecording = sd.rec(int(4 * fs), dtype='int16', channels=1, blocking=True)
+    print(ds.stt(myrecording.flatten(), fs))
