@@ -3,6 +3,7 @@ import sounddevice as sd
 from deepspeech import Model
 import argparse
 from pathlib import Path
+import queue
 
 # Beam width used in the CTC decoder when building candidate transcriptions
 BEAM_WIDTH = 500
@@ -42,8 +43,18 @@ ds.enableDecoderWithLM(
     LM_WEIGHT,
     VALID_WORD_COUNT_WEIGHT
 )
+sctx = ds.setupStream()
 
-while True:
-    print('Started listening')
-    myrecording = sd.rec(int(4 * fs), dtype='int16', channels=1, blocking=True)
-    print(ds.stt(myrecording.flatten(), fs))
+q = queue.Queue()
+
+
+def callback(indata, frames, time, status):
+    """This is called (from a separate thread) for each audio block."""
+    q.put(indata.copy())
+
+
+# Make sure the file is opened before recording anything:
+with sd.InputStream(samplerate=fs, channels=1, callback=callback):
+    while True:
+        ds.feedAudioContent(sctx, q.get())
+        print(ds.intermediateDecode())
